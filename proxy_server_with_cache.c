@@ -521,7 +521,7 @@ cache_element *find(char* url){
             site = site->next;
         }
     } else {
-        printf("URL not found");
+        printf("URL not found in cache");
     }
     temp_lock_val = pthread_mutex_unlock(&lock);
     printf("Lock is unlocked");
