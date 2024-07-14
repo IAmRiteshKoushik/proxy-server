@@ -57,8 +57,138 @@ sem_t semaphore;
 cache_element* head;
 int cache_size;
 
+int sendErrorMessage(int socket, int status_code){
+
+    char str[1024];
+    char currentTime[50];
+    time_t now = time(0);
+
+    struct tm data = *gmtime(&now);
+    strftime(currentTime, sizeof(currentTime), "%a, %d %b %Y %H:%M:%S %Z", &data);
+
+    switch (status_code) {
+        case 400:
+                sprintf(str, sizeof(str),
+                "HTTP/1.1 400 Bad Request\r\n\
+                Content-Length: 95\r\n\
+                Connection: keep-alive\r\n\
+                Content-Type: text/html\r\n\
+                Date: %s\r\n\
+                Server: Ritesh-Server\r\n\r\n\
+                <html>\
+                    <head>\
+                        <title>400 Bad Request</title>\
+                    </head>\n\
+                    <body>\
+                        <h1>400 Bad Request</h1>\n\
+                    </body>\
+                </html>", currentTime);
+                printf("400 Bad Request\n");
+                send(socket, str, strlen(str), 0);
+                break;
+        case 403:
+                sprintf(str, sizeof(str),
+                "HTTP/1.1 403 Forbidden\r\n\
+                Content-Length: 112\r\n\
+                Connection: keep-alive\r\n\
+                Content-Type: text/html\r\n\
+                Date: %s\r\n\
+                Server: Ritesh-Serves\r\n\r\n\
+                <html>\
+                    <head>\
+                        <title>403 Forbidden</title>\
+                    </head>\n\
+                    <body>\
+                        <h1>403 Forbidden</h1>\n\
+                    </body>\
+                </html>", currentTime);
+                printf("403 Forbidden\n");
+                send(socket, str, strlen(str), 0);
+                break;
+        case 404:
+                sprintf(str, sizeof(str),
+                "HTTP/1.1 404 Not Found\r\n\
+                Content-Length: 91\r\n\
+                Connection: keep-alive\r\n\
+                Content-Type: text/html\r\n\
+                Date: %s\r\n\
+                Server: Ritesh-Serves\r\n\r\n\
+                <html>\
+                    <head>\
+                        <title>404 Not Found</title>\
+                    </head>\n\
+                    <body>\
+                        <h1>404 Not Found</h1>\n\
+                    </body>\
+                </html>", currentTime);
+                printf("404 Not Found\n");
+                send(socket, str, strlen(str), 0);
+                break;
+        case 500:
+                sprintf(str, sizeof(str),
+                "HTTP/1.1 500 Interal Server Error\r\n\
+                Content-Length: 115\r\n\
+                Connection: keep-alive\r\n\
+                Content-Type: text/html\r\n\
+                Date: %s\r\n\
+                Server: Ritesh-Serves\r\n\r\n\
+                <html>\
+                    <head>\
+                        <title>500 Interal Server Error</title>\
+                    </head>\n\
+                    <body>\
+                        <h1>500 Interal Server Error</h1>\n\
+                    </body>\
+                </html>", currentTime);
+                printf("500 Interal Server Error\n");
+                send(socket, str, strlen(str), 0);
+                break;
+        case 501:
+                sprintf(str, sizeof(str),
+                "HTTP/1.1 501 Not Implemented\r\n\
+                Content-Length: 103\r\n\
+                Connection: keep-alive\r\n\
+                Content-Type: text/html\r\n\
+                Date: %s\r\n\
+                Server: Ritesh-Serves\r\n\r\n\
+                <html>\
+                    <head>\
+                        <title>501 Not Implemented</title>\
+                    </head>\n\
+                    <body>\
+                        <h1>501 Not Implemented</h1>\n\
+                    </body>\
+                </html>", currentTime);
+                printf("501 Not Implemented\n");
+                send(socket, str, strlen(str), 0);
+                break;
+        case 505: 
+                sprintf(str, sizeof(str),
+                "HTTP/1.1 505 HTTP Version Not Supported\r\n\
+                Content-Length: 125\r\n\
+                Connection: keep-alive\r\n\
+                Content-Type: text/html\r\n\
+                Date: %s\r\n\
+                Server: Ritesh-Serves\r\n\r\n\
+                <html>\
+                    <head>\
+                        <title>505 HTTP version Not Supported</title>\
+                    </head>\n\
+                    <body>\
+                        <h1>505 HTTP Version Not Supported</h1>\n\
+                    </body>\
+                </html>", currentTime);
+                printf("505 HTTP Version Not Supported\n");
+                send(socket, str, strlen(str), 0);
+                break;
+        default: return -1;
+    }
+    return 0;
+}
+
 int connectRemoteServer(char* host_addr, int port_num){
-    // READ
+    // Creating remote server socket
+
     int remoteSocket = socket(AF_INET, SOCK_STREAM, 0);
     if(remoteSocket < 0){
         printf("Error in creating your socket\n");
@@ -117,8 +247,65 @@ int handle_request(int clientSocketId, struct ParsedRequest* request, char* temp
     if(request->port != NULL){
         server_port = atoi(request->port);
     }
+
+    // Remote socket
     int remoteSocketId = connectRemoteServer(request->host, server_port);
+    if(remoteSocketId < 0){
+        return -1;
+    }
+    
+    int bytes_send = send(remoteSocketId, buf, strlen(buf), 0);
+    bzero(buf, MAX_BYTES);
+
+    // Keep receiving till response keeps coming
+    bytes_send = recv(remoteSocketId, buf, MAX_BYTES - 1, 0);
+    char* temp_buffer = (char*)malloc(sizeof(char)*MAX_BYTES);
+    int temp_buffer_size = MAX_BYTES;
+    int temp_buffer_index = 0;
+
+    while(bytes_send > 0){
+        bytes_send = send(clientSocketId, buf, bytes_send, 0);
+        for(int i = 0; i < bytes_send/sizeof(char); i++){
+
+            // Accept all incoming responses into temp buffer as this has to 
+            // be stored in the LRU cache later on
+            temp_buffer[temp_buffer_index] = buf[i];
+            temp_buffer_index++;
+        }
+        temp_buffer_size += MAX_BYTES;
+        // Dynamically allocating more space to temporary buffer to 
+        // accomodate huge incoming responses
+        temp_buffer = (char*)realloc(temp_buffer, temp_buffer_size);
+        if(bytes_send < 0){
+            perror("Error in sending data to the client\n");
+            break;
+        }
+        bzero(buf, MAX_BYTES);
+        bytes_send = recv(remoteSocketId, buf, MAX_BYTES - 1, 0);
+    }
+
+    free(buf);
+    add_cache_element(temp_buffer, strlen(temp_buffer), tempReq);
+    free(temp_buffer);
+    close(remoteSocketId);
+
+    return 0;
+    
 }
+
+int checkHTTPversion(char* msg){
+    int version = -1;
+
+    if(strncmp(msg, "HTTP/1.1", 8) == 0){
+        version = 1;
+    } else if(strncmp(msg, "HTTP/1.0", 8) == 0){
+        version = 1;
+    } else {
+        version = -1;
+    }
+    return version;
+}
+
 
 void *thread_fn(void *socketNew){
     // Using a semaphore. If the value has become negative then it waits, 
