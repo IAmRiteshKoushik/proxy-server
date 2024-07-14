@@ -57,12 +57,75 @@ sem_t semaphore;
 cache_element* head;
 int cache_size;
 
+int connectRemoteServer(char* host_addr, int port_num){
+    // READ
+    int remoteSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if(remoteSocket < 0){
+        printf("Error in creating your socket\n");
+        return -1;
+    }
+    struct hostent* host = gethostbyname(host_addr);
+    if(host == NULL){
+        fprintf(stderr, "No such host exists\n");
+        return -1;
+    }
+    struct sockaddr_in server_addr;
+    bzero((char *)&server_addr, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port_num);
+
+    bcopy((char *)&host->h_addr, (char *)&server_addr.sin_addr.s_addr, 
+          host->h_length);
+    if(connect(remoteSocket, (struct sockaddr *)&server_addr, 
+        (size_t)sizeof(server_addr) < 0)){
+        fprintf(stderr, "Error in connecting\n");
+        return -1;
+    }
+
+    // If connected successfully, return the socket (which is an integer)
+    return remoteSocket;
+}
+
+int handle_request(int clientSocketId, struct ParsedRequest* request, char* tempReq){
+    char* buf = (char *)malloc(sizeof(char)*MAX_BYTES);
+
+    strcpy(buf, "GET ");
+    strcat(buf, request->path);
+    strcat(buf, " ");
+    strcat(buf, request->version);
+    strcat(buf, "\r\n");
+
+    size_t len = strlen(buf);
+    
+    // Connection - header
+    if(ParsedHeader_set(request, "Connection", "close") < 0){
+        printf("Set header key is not working");
+    }
+    // Host - header
+    if(ParsedHeader_get(request, "Host") == NULL){
+        if(ParsedHeader_set(request, "Host", request->host) < 0){
+            printf("Set Host header key is not working");
+        }
+    }
+    if(ParsedRequest_unparse_headers(request, buf + len, 
+            (size_t)MAX_BYTES -  len) < 0){
+        printf("Unparse failed");
+    }
+
+    // End-server
+    int server_port = 80;
+    if(request->port != NULL){
+        server_port = atoi(request->port);
+    }
+    int remoteSocketId = connectRemoteServer(request->host, server_port);
+}
+
 void *thread_fn(void *socketNew){
     // Using a semaphore. If the value has become negative then it waits, 
     // otherwise it proceeds.
     sem_wait(&semaphore);
     int p;
-    sem_getvalue(&semaphore, p);
+    sem_getvalue(&semaphore, &p);
     printf("Semaphore value is %d\n", p);
 
     // Making a pointer
@@ -151,7 +214,15 @@ void *thread_fn(void *socketNew){
     }
     shutdown(socket, SHUT_RDWR);
     close(socket);
-    
+    free(buffer);
+
+    // Release semaphore
+    sem_post(&semaphore);
+    sem_getvalue(&semaphore, &p);
+    printf("Semaphore post value is %d\n", p);
+    free(tempReq);
+
+    return NULL;
 }
 
 
