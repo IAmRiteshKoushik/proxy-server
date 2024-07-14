@@ -19,6 +19,8 @@
 
 #define MAX_CLIENTS 10
 #define MAX_BYTES 4096    // bytes allocation space - 4KB
+#define MAX_ELEMENT_SIZE 10 * (1<<10)
+#define MAX_SIZE 200 * (1<<20) // size of cache
 
 typedef struct cache_element cache_element ;
 
@@ -27,10 +29,9 @@ struct cache_element {
     char* data;
     int len;
     char* url;
-    time_t lru_time_based;
-
-    // We need a linked-list to access corresponding cache elements
+    time_t lru_time_track;
     cache_element* next; 
+    // We need a linked-list to access corresponding cache elements
 };
 
 cache_element* find(char* url);
@@ -499,5 +500,97 @@ int main(int argc, char* argv[]){
 
     // Deallocate the socket memory
     close(proxy_socketId);
+    return 1;
+}
+
+cache_element *find(char* url){
+    // finding element inside linked-list
+    cache_element* site = NULL;
+    int temp_lock_val = pthread_mutex_lock(&lock);
+    printf("Remove cache Lock acquired %d\n", temp_lock_val);
+    if(head != NULL){
+        site = head;
+        while(site != NULL){
+            if(!strcmp(site->url, url)){
+                printf("LRU time track before: %ld", site->lru_time_track);
+                printf("\n URL found\n");
+                site->lru_time_track = time(NULL);
+                printf("LRU time track after %ld", site->lru_time_track);
+                break;
+            }
+            site = site->next;
+        }
+    } else {
+        printf("URL not found");
+    }
+    temp_lock_val = pthread_mutex_unlock(&lock);
+    printf("Lock is unlocked");
+    return site;
+}
+
+void remove_cache_element(){
+    // if cache is not empty, search for the node which has the least 
+    // lru_time_track and delete it.
+
+    cache_element *p;
+    cache_element *q;
+    cache_element *temp;
+
+    // Removing elements from a linked list but with a mutex-lock
+    int temp_lock_val = pthread_mutex_lock(&lock);
+    printf("Lock is acquired\n");
+    if(head != NULL){
+        for(q=head, p=head, temp=head; q->next != NULL; q = q->next){
+            if(((q->next)->lru_time_track) < (temp->lru_time_track)){
+                temp = q->next;
+                p = q;
+            }
+        }
+        if(temp==head){
+            head = head->next;
+        } else {
+            // Removing the least recently used
+            p->next = temp->next;
+        }
+
+        cache_size = cache_size - (temp->len) - sizeof(cache_element) 
+            - strlen(temp->url) - 1;
+
+        // Deallocate things one by one
+        free(temp->data);
+        free(temp->url);
+        free(temp);
+    }
+
+    temp_lock_val = pthread_mutex_unlock(&lock);
+    printf("Remove cache lock\n");
+}
+
+int add_cache_element(char *data, int size, char* url){
+    int temp_lock_val = pthread_mutex_lock(&lock);
+    printf("Remove cache Lock acquired %d\n", temp_lock_val);
+    int element_size = size + 1 + strlen(url) + sizeof(cache_element);
+    if(element_size > MAX_ELEMENT_SIZE){
+        // element is too big, do something else
+        temp_lock_val = pthread_mutex_unlock(&lock);
+        printf("Add cache lock is unlocked");
+    } else {
+        while(cache_size + element_size > MAX_SIZE){
+            remove_cache_element();
+        }
+        cache_element* element = (cache_element*)malloc(sizeof(cache_element));
+        element->data = (char*)malloc(size+1);
+        strcpy(element->data, data);
+        element->url = (char*)malloc(1 + (strlen(url) * sizeof(char)));
+        strcpy(element->url, url);
+        element->lru_time_track = time(NULL);
+        element->next = head;
+        element->len = size;
+
+        cache_size += element_size;
+        temp_lock_val = pthread_mutex_unlock(&lock);
+        printf("Add cache lock is unlocked\n");
+        return 1;
+    }
     return 0;
 }
